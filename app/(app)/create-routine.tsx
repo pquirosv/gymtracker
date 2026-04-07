@@ -14,10 +14,17 @@ import { useAuth } from '../../supabase/auth-context'
 import { supabase } from '../../supabase/supabase'
 
 type Step = 'setup' | 'builder'
+type RoutineMode = 'manual' | 'automatic'
+type RoutineSplit = 'upper_lower' | 'push_pull_legs'
+type ExerciseUpperLowerGroup = 'upper' | 'lower'
+type ExercisePplGroup = 'pull' | 'push' | 'legs'
+type DayFocus = ExerciseUpperLowerGroup | ExercisePplGroup
 
 type ExerciseOption = {
   id: string
   name: string
+  upper_lower_group: ExerciseUpperLowerGroup
+  ppl_group: ExercisePplGroup
 }
 
 type RoutineRecord = {
@@ -35,39 +42,127 @@ type RoutineExerciseRecord = {
 }
 
 type RoutineExerciseDraft = {
+  draftKey: string
   exerciseId: string
-  exerciseName: string
-  sets: number
-  reps: number
+  sets: string
+  reps: string
   exerciseOrder: number
 }
 
 type RoutineDayDraft = {
   dayNumber: number
+  label: string
+  focus: DayFocus | null
   exercises: RoutineExerciseDraft[]
 }
 
 type RoutineDraft = {
   totalDays: number
   activeDay: number
+  mode: RoutineMode
+  split: RoutineSplit | null
   days: RoutineDayDraft[]
 }
 
-type PendingExerciseForm = {
-  isOpen: boolean
-  exerciseId: string
-  sets: string
-  reps: string
-  error: string
+type AutoTemplateDay = {
+  label: string
+  focus: DayFocus
+  slots: string[][]
 }
 
-const emptyExerciseForm: PendingExerciseForm = {
-  isOpen: false,
-  exerciseId: '',
-  sets: '',
-  reps: '',
-  error: '',
+const DEFAULT_EXERCISE_SETS = '3'
+const DEFAULT_EXERCISE_REPS = '10'
+
+const AUTO_ROUTINE_TEMPLATES: Record<RoutineSplit, AutoTemplateDay[]> = {
+  upper_lower: [
+    {
+      label: 'Upper A',
+      focus: 'upper',
+      slots: [
+        ['Press banca', 'Flexiones', 'Fondos en paralelas'],
+        ['Remo con barra', 'Remo con mancuerna', 'Remo en cable'],
+        ['Dominadas', 'Jalón al pecho'],
+        ['Press militar', 'Press Arnold'],
+        ['Curl bíceps', 'Curl martillo', 'Curl predicador'],
+        ['Extensión de tríceps en polea', 'Press francés', 'Press banca cerrado'],
+      ],
+    },
+    {
+      label: 'Lower A',
+      focus: 'lower',
+      slots: [
+        ['Sentadilla', 'Prensa de piernas', 'Sentadilla búlgara'],
+        ['Peso muerto', 'Peso muerto rumano', 'Buenos días'],
+        ['Prensa de piernas', 'Extensión de cuádriceps', 'Step-up'],
+        ['Curl femoral', 'Hip thrust', 'Puente de glúteo'],
+        ['Elevación de gemelos de pie', 'Elevación de gemelos sentado'],
+        ['Abdominales'],
+      ],
+    },
+    {
+      label: 'Upper B',
+      focus: 'upper',
+      slots: [
+        ['Press banca inclinado', 'Aperturas con mancuernas', 'Press banca'],
+        ['Remo con mancuerna', 'Remo T', 'Remo con barra'],
+        ['Jalón al pecho', 'Dominadas'],
+        ['Elevaciones laterales', 'Pájaros', 'Face pull'],
+        ['Curl martillo', 'Curl bíceps', 'Curl predicador'],
+        ['Fondos en paralelas', 'Extensión de tríceps en polea', 'Press francés'],
+      ],
+    },
+    {
+      label: 'Lower B',
+      focus: 'lower',
+      slots: [
+        ['Prensa de piernas', 'Zancadas', 'Sentadilla búlgara'],
+        ['Hip thrust', 'Peso muerto rumano', 'Puente de glúteo'],
+        ['Extensión de cuádriceps', 'Step-up', 'Sentadilla'],
+        ['Curl femoral', 'Peso muerto rumano', 'Hip thrust'],
+        ['Elevación de gemelos sentado', 'Elevación de gemelos de pie'],
+        ['Abdominales'],
+      ],
+    },
+  ],
+  push_pull_legs: [
+    {
+      label: 'Pull',
+      focus: 'pull',
+      slots: [
+        ['Dominadas', 'Jalón al pecho'],
+        ['Remo con barra', 'Remo con mancuerna', 'Remo en cable'],
+        ['Face pull', 'Pájaros', 'Remo T'],
+        ['Curl bíceps', 'Curl martillo'],
+        ['Curl predicador', 'Curl martillo', 'Curl bíceps'],
+      ],
+    },
+    {
+      label: 'Push',
+      focus: 'push',
+      slots: [
+        ['Press banca', 'Flexiones', 'Fondos en paralelas'],
+        ['Press banca inclinado', 'Aperturas con mancuernas', 'Press banca'],
+        ['Press militar', 'Press Arnold'],
+        ['Elevaciones laterales', 'Press Arnold', 'Aperturas con mancuernas'],
+        ['Extensión de tríceps en polea', 'Press francés', 'Press banca cerrado'],
+      ],
+    },
+    {
+      label: 'Legs',
+      focus: 'legs',
+      slots: [
+        ['Sentadilla', 'Prensa de piernas', 'Sentadilla búlgara'],
+        ['Peso muerto rumano', 'Peso muerto', 'Buenos días'],
+        ['Extensión de cuádriceps', 'Zancadas', 'Step-up'],
+        ['Curl femoral', 'Hip thrust', 'Puente de glúteo'],
+        ['Elevación de gemelos de pie', 'Elevación de gemelos sentado'],
+        ['Abdominales'],
+      ],
+    },
+  ],
 }
+
+let draftExerciseCounter = 0
 
 export default function CreateRoutineScreen() {
   const router = useRouter()
@@ -78,14 +173,15 @@ export default function CreateRoutineScreen() {
   const [screenError, setScreenError] = useState('')
   const [setupError, setSetupError] = useState('')
   const [saveError, setSaveError] = useState('')
+  const [selectedMode, setSelectedMode] = useState<RoutineMode>('manual')
+  const [selectedSplit, setSelectedSplit] = useState<RoutineSplit>('upper_lower')
   const [totalDaysInput, setTotalDaysInput] = useState('')
   const [pendingReducedDays, setPendingReducedDays] = useState<number | null>(null)
   const [catalog, setCatalog] = useState<ExerciseOption[]>([])
   const [existingRoutine, setExistingRoutine] = useState<RoutineRecord | null>(null)
   const [existingRoutineExercises, setExistingRoutineExercises] = useState<RoutineExerciseRecord[]>([])
   const [routineDraft, setRoutineDraft] = useState<RoutineDraft | null>(null)
-  const [pendingExerciseForm, setPendingExerciseForm] = useState<PendingExerciseForm>(emptyExerciseForm)
-  const [isExercisePickerOpen, setIsExercisePickerOpen] = useState(false)
+  const [pickerExerciseKey, setPickerExerciseKey] = useState<string | null>(null)
 
   useEffect(() => {
     const userId = session?.user.id
@@ -103,7 +199,11 @@ export default function CreateRoutineScreen() {
       setScreenError('')
 
       const [catalogResult, routineResult] = await Promise.all([
-        supabase.from('exercises').select('id, name').order('name', { ascending: true }).returns<ExerciseOption[]>(),
+        supabase
+          .from('exercises')
+          .select('id, name, upper_lower_group, ppl_group')
+          .order('name', { ascending: true })
+          .returns<ExerciseOption[]>(),
         supabase
           .from('routines')
           .select('id, total_days')
@@ -160,15 +260,51 @@ export default function CreateRoutineScreen() {
   }, [session?.user.id])
 
   const activeDay = routineDraft ? routineDraft.days[routineDraft.activeDay - 1] : null
-  const selectedExerciseName = catalog.find((exercise) => exercise.id === pendingExerciseForm.exerciseId)?.name ?? ''
-  const availableExercises = activeDay
-    ? catalog.filter(
-        (exercise) =>
-          !activeDay.exercises.some((dayExercise) => dayExercise.exerciseId === exercise.id)
-      )
+  const pickerExercise =
+    pickerExerciseKey && activeDay
+      ? activeDay.exercises.find((exercise) => exercise.draftKey === pickerExerciseKey) ?? null
+      : null
+  const pickerSelectedExerciseName =
+    catalog.find((exercise) => exercise.id === pickerExercise?.exerciseId)?.name ?? ''
+  const pickerOptions = activeDay
+    ? getSelectableExercises(activeDay, catalog, routineDraft?.mode ?? 'manual', pickerExercise?.exerciseId ?? '')
     : []
+  const canAddMoreExercises = !!activeDay
+    && getSelectableExercises(activeDay, catalog, routineDraft?.mode ?? 'manual', '').length > 0
+
+  const updateDraft = (updater: (draft: RoutineDraft) => RoutineDraft) => {
+    setRoutineDraft((currentDraft) => {
+      if (!currentDraft) {
+        return currentDraft
+      }
+
+      return updater(currentDraft)
+    })
+  }
+
+  const openBuilder = (draft: RoutineDraft) => {
+    setPickerExerciseKey(null)
+    setPendingReducedDays(null)
+    setSetupError('')
+    setSaveError('')
+    setRoutineDraft(draft)
+    setStep('builder')
+  }
+
+  const openManualBuilder = (totalDays: number) => {
+    openBuilder(buildManualRoutineDraft(existingRoutineExercises, totalDays))
+  }
+
+  const openAutomaticBuilder = () => {
+    openBuilder(buildAutomaticRoutineDraft(selectedSplit, catalog))
+  }
 
   const handleContinue = () => {
+    if (selectedMode === 'automatic') {
+      openAutomaticBuilder()
+      return
+    }
+
     const nextTotalDays = parsePositiveInteger(totalDaysInput)
 
     setSetupError('')
@@ -184,24 +320,7 @@ export default function CreateRoutineScreen() {
       return
     }
 
-    openBuilder(nextTotalDays)
-  }
-
-  const openBuilder = (totalDays: number) => {
-    setPendingExerciseForm(emptyExerciseForm)
-    setSaveError('')
-    setRoutineDraft(buildRoutineDraft(existingRoutine, existingRoutineExercises, catalog, totalDays))
-    setStep('builder')
-  }
-
-  const updateDraft = (updater: (draft: RoutineDraft) => RoutineDraft) => {
-    setRoutineDraft((currentDraft) => {
-      if (!currentDraft) {
-        return currentDraft
-      }
-
-      return updater(currentDraft)
-    })
+    openManualBuilder(nextTotalDays)
   }
 
   const handleSelectDay = (dayNumber: number) => {
@@ -210,59 +329,12 @@ export default function CreateRoutineScreen() {
       activeDay: dayNumber,
     }))
 
-    setPendingExerciseForm(emptyExerciseForm)
+    setPickerExerciseKey(null)
     setSaveError('')
   }
 
-  const handleOpenExerciseForm = () => {
-    setPendingExerciseForm({
-      isOpen: true,
-      exerciseId: '',
-      sets: '',
-      reps: '',
-      error: '',
-    })
-  }
-
-  const handleCloseExerciseForm = () => {
-    setPendingExerciseForm(emptyExerciseForm)
-    setIsExercisePickerOpen(false)
-  }
-
-  const handleSaveExercise = () => {
-    if (!routineDraft || !activeDay) {
-      return
-    }
-
-    const sets = parsePositiveInteger(pendingExerciseForm.sets)
-    const reps = parsePositiveInteger(pendingExerciseForm.reps)
-    const selectedExercise = catalog.find((exercise) => exercise.id === pendingExerciseForm.exerciseId)
-
-    if (!selectedExercise) {
-      setPendingExerciseForm((currentForm) => ({
-        ...currentForm,
-        error: 'Selecciona un ejercicio.',
-      }))
-      return
-    }
-
-    if (!sets || !reps) {
-      setPendingExerciseForm((currentForm) => ({
-        ...currentForm,
-        error: 'Series y repeticiones deben ser números enteros mayores que 0.',
-      }))
-      return
-    }
-
-    const alreadyExists = activeDay.exercises.some(
-      (exercise) => exercise.exerciseId === selectedExercise.id
-    )
-
-    if (alreadyExists) {
-      setPendingExerciseForm((currentForm) => ({
-        ...currentForm,
-        error: 'Ese ejercicio ya está añadido en este día.',
-      }))
+  const handleAddExercise = () => {
+    if (!activeDay) {
       return
     }
 
@@ -274,24 +346,36 @@ export default function CreateRoutineScreen() {
               ...day,
               exercises: [
                 ...day.exercises,
-                {
-                  exerciseId: selectedExercise.id,
-                  exerciseName: selectedExercise.name,
-                  sets,
-                  reps,
-                  exerciseOrder: day.exercises.length + 1,
-                },
+                createEmptyExerciseDraft(day.exercises.length + 1),
               ],
             }
           : day
       ),
     }))
-
-    setPendingExerciseForm(emptyExerciseForm)
-    setIsExercisePickerOpen(false)
+    setSaveError('')
   }
 
-  const handleRemoveExercise = (exerciseId: string) => {
+  const updateExercise = (
+    draftKey: string,
+    updater: (exercise: RoutineExerciseDraft) => RoutineExerciseDraft
+  ) => {
+    updateDraft((currentDraft) => ({
+      ...currentDraft,
+      days: currentDraft.days.map((day) =>
+        day.dayNumber === currentDraft.activeDay
+          ? {
+              ...day,
+              exercises: day.exercises.map((exercise) =>
+                exercise.draftKey === draftKey ? updater(exercise) : exercise
+              ),
+            }
+          : day
+      ),
+    }))
+    setSaveError('')
+  }
+
+  const handleRemoveExercise = (draftKey: string) => {
     updateDraft((currentDraft) => ({
       ...currentDraft,
       days: currentDraft.days.map((day) =>
@@ -299,12 +383,18 @@ export default function CreateRoutineScreen() {
           ? {
               ...day,
               exercises: reindexExercises(
-                day.exercises.filter((exercise) => exercise.exerciseId !== exerciseId)
+                day.exercises.filter((exercise) => exercise.draftKey !== draftKey)
               ),
             }
           : day
       ),
     }))
+
+    if (pickerExerciseKey === draftKey) {
+      setPickerExerciseKey(null)
+    }
+
+    setSaveError('')
   }
 
   const handleSaveRoutine = async () => {
@@ -320,6 +410,42 @@ export default function CreateRoutineScreen() {
 
     if (hasEmptyDay) {
       setSaveError('Cada día debe tener al menos un ejercicio.')
+      return
+    }
+
+    const normalizedDays = routineDraft.days.map((day) => {
+      const seenExerciseIds = new Set<string>()
+      const exercises = day.exercises.map((exercise, index) => {
+        const sets = parsePositiveInteger(exercise.sets)
+        const reps = parsePositiveInteger(exercise.reps)
+
+        if (!exercise.exerciseId || !sets || !reps || seenExerciseIds.has(exercise.exerciseId)) {
+          return null
+        }
+
+        seenExerciseIds.add(exercise.exerciseId)
+
+        return {
+          exercise_id: exercise.exerciseId,
+          sets,
+          reps,
+          exercise_order: index + 1,
+        }
+      })
+
+      return {
+        dayNumber: day.dayNumber,
+        exercises,
+      }
+    })
+
+    const hasInvalidExercises = normalizedDays.some((day) =>
+      day.exercises.length !== routineDraft.days[day.dayNumber - 1]?.exercises.length
+      || day.exercises.some((exercise) => exercise === null)
+    )
+
+    if (hasInvalidExercises) {
+      setSaveError('Revisa cada día: no puede haber ejercicios repetidos ni series o repeticiones vacías.')
       return
     }
 
@@ -372,15 +498,14 @@ export default function CreateRoutineScreen() {
       return
     }
 
-    const routineExercisesPayload = routineDraft.days.flatMap((day) =>
-      day.exercises.map((exercise, index) => ({
-        routine_id: routineId,
-        day_number: day.dayNumber,
-        exercise_id: exercise.exerciseId,
-        sets: exercise.sets,
-        reps: exercise.reps,
-        exercise_order: index + 1,
-      }))
+    const routineExercisesPayload = normalizedDays.flatMap((day) =>
+      day.exercises
+        .filter((exercise): exercise is NonNullable<typeof exercise> => exercise !== null)
+        .map((exercise) => ({
+          routine_id: routineId,
+          day_number: day.dayNumber,
+          ...exercise,
+        }))
     )
 
     const { error: insertExercisesError } = await supabase
@@ -427,51 +552,159 @@ export default function CreateRoutineScreen() {
         <View style={styles.card}>
           <Text style={styles.title}>Crear rutina</Text>
           <Text style={styles.body}>
-            Define primero cuántos días tendrá tu rutina. Después podrás configurar los ejercicios de
-            cada día.
+            Elige si quieres construir tu rutina manualmente o partir de una rutina automática por split.
           </Text>
 
-          <Text style={styles.label}>Días totales</Text>
-          <TextInput
-            value={totalDaysInput}
-            onChangeText={(value) => {
-              setTotalDaysInput(onlyDigits(value))
-              setSetupError('')
-              setPendingReducedDays(null)
-            }}
-            keyboardType="number-pad"
-            placeholder="Ejemplo: 4"
-            style={styles.input}
-          />
+          <Text style={styles.label}>Modo</Text>
+          <View style={styles.modeOptions}>
+            <TouchableOpacity
+              style={[styles.modeCard, selectedMode === 'manual' && styles.modeCardActive]}
+              onPress={() => {
+                setSelectedMode('manual')
+                setSetupError('')
+                setPendingReducedDays(null)
+              }}
+            >
+              <Text style={[styles.modeTitle, selectedMode === 'manual' && styles.modeTitleActive]}>
+                Manual
+              </Text>
+              <Text
+                style={[
+                  styles.modeDescription,
+                  selectedMode === 'manual' && styles.modeDescriptionActive,
+                ]}
+              >
+                Tú eliges los días y añades cada ejercicio desde cero.
+              </Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[styles.modeCard, selectedMode === 'automatic' && styles.modeCardActive]}
+              onPress={() => {
+                setSelectedMode('automatic')
+                setSetupError('')
+                setPendingReducedDays(null)
+              }}
+            >
+              <Text
+                style={[
+                  styles.modeTitle,
+                  selectedMode === 'automatic' && styles.modeTitleActive,
+                ]}
+              >
+                Automática
+              </Text>
+              <Text
+                style={[
+                  styles.modeDescription,
+                  selectedMode === 'automatic' && styles.modeDescriptionActive,
+                ]}
+              >
+                Genera una base editable con ejercicios ya clasificados por split.
+              </Text>
+            </TouchableOpacity>
+          </View>
+
+          {selectedMode === 'manual' ? (
+            <>
+              <Text style={styles.label}>Días totales</Text>
+              <TextInput
+                value={totalDaysInput}
+                onChangeText={(value) => {
+                  setTotalDaysInput(onlyDigits(value))
+                  setSetupError('')
+                  setPendingReducedDays(null)
+                }}
+                keyboardType="number-pad"
+                placeholder="Ejemplo: 4"
+                style={styles.input}
+              />
+
+              {pendingReducedDays ? (
+                <View style={styles.warningCard}>
+                  <Text style={styles.warningTitle}>Se recortará la rutina actual</Text>
+                  <Text style={styles.warningText}>
+                    Solo se conservarán en el borrador los primeros {pendingReducedDays} días de tu rutina
+                    actual.
+                  </Text>
+                  <View style={styles.warningActions}>
+                    <TouchableOpacity
+                      style={styles.warningSecondaryButton}
+                      onPress={() => setPendingReducedDays(null)}
+                    >
+                      <Text style={styles.warningSecondaryButtonText}>Cancelar</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={styles.warningPrimaryButton}
+                      onPress={() => openManualBuilder(pendingReducedDays)}
+                    >
+                      <Text style={styles.warningPrimaryButtonText}>Continuar</Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              ) : null}
+            </>
+          ) : (
+            <>
+              <Text style={styles.label}>Split automático</Text>
+              <View style={styles.splitOptions}>
+                <TouchableOpacity
+                  style={[styles.splitCard, selectedSplit === 'upper_lower' && styles.splitCardActive]}
+                  onPress={() => setSelectedSplit('upper_lower')}
+                >
+                  <Text style={[styles.splitTitle, selectedSplit === 'upper_lower' && styles.splitTitleActive]}>
+                    Upper / Lower
+                  </Text>
+                  <Text
+                    style={[
+                      styles.splitDescription,
+                      selectedSplit === 'upper_lower' && styles.splitDescriptionActive,
+                    ]}
+                  >
+                    4 días: Upper A, Lower A, Upper B y Lower B.
+                  </Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[
+                    styles.splitCard,
+                    selectedSplit === 'push_pull_legs' && styles.splitCardActive,
+                  ]}
+                  onPress={() => setSelectedSplit('push_pull_legs')}
+                >
+                  <Text
+                    style={[
+                      styles.splitTitle,
+                      selectedSplit === 'push_pull_legs' && styles.splitTitleActive,
+                    ]}
+                  >
+                    Pull / Push / Legs
+                  </Text>
+                  <Text
+                    style={[
+                      styles.splitDescription,
+                      selectedSplit === 'push_pull_legs' && styles.splitDescriptionActive,
+                    ]}
+                  >
+                    3 días: uno de tirón, uno de empuje y uno de pierna.
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            </>
+          )}
+
+          {existingRoutine ? (
+            <Text style={styles.helperText}>
+              Al guardar, la rutina nueva reemplazará la que tienes ahora mismo.
+            </Text>
+          ) : null}
 
           {!!setupError && <Text style={styles.errorText}>{setupError}</Text>}
 
-          {pendingReducedDays ? (
-            <View style={styles.warningCard}>
-              <Text style={styles.warningTitle}>Se recortará la rutina actual</Text>
-              <Text style={styles.warningText}>
-                Solo se conservarán en el borrador los primeros {pendingReducedDays} días de tu rutina
-                actual.
-              </Text>
-              <View style={styles.warningActions}>
-                <TouchableOpacity
-                  style={styles.warningSecondaryButton}
-                  onPress={() => setPendingReducedDays(null)}
-                >
-                  <Text style={styles.warningSecondaryButtonText}>Cancelar</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={styles.warningPrimaryButton}
-                  onPress={() => openBuilder(pendingReducedDays)}
-                >
-                  <Text style={styles.warningPrimaryButtonText}>Continuar</Text>
-                </TouchableOpacity>
-              </View>
-            </View>
-          ) : null}
-
           <TouchableOpacity style={styles.primaryButton} onPress={handleContinue}>
-            <Text style={styles.primaryButtonText}>Continuar</Text>
+            <Text style={styles.primaryButtonText}>
+              {selectedMode === 'manual' ? 'Continuar' : 'Generar rutina'}
+            </Text>
           </TouchableOpacity>
 
           <TouchableOpacity style={styles.secondaryButton} onPress={() => router.replace('/')}>
@@ -485,10 +718,13 @@ export default function CreateRoutineScreen() {
   return (
     <>
       <ScrollView style={styles.screen} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
-        <Text style={styles.pageTitle}>Construye tu rutina</Text>
+        <Text style={styles.pageTitle}>
+          {routineDraft?.mode === 'automatic' ? 'Rutina automática' : 'Construye tu rutina'}
+        </Text>
         <Text style={styles.pageSubtitle}>
-          Tus {routineDraft?.totalDays ?? 0} días ya están fijados. Si quieres cambiarlos, sal de esta
-          pantalla y vuelve a empezar.
+          {routineDraft?.mode === 'automatic'
+            ? `Split ${getSplitLabel(routineDraft.split)} con ${routineDraft?.totalDays ?? 0} días. Puedes ajustar ejercicios, series y repeticiones antes de guardar.`
+            : `Tus ${routineDraft?.totalDays ?? 0} días ya están fijados. Puedes editar cada ejercicio antes de guardar.`}
         </Text>
 
         <View style={styles.section}>
@@ -504,7 +740,7 @@ export default function CreateRoutineScreen() {
                   onPress={() => handleSelectDay(day.dayNumber)}
                 >
                   <Text style={[styles.dayTabText, isActive && styles.dayTabTextActive]}>
-                    Día {day.dayNumber}
+                    {day.label}
                   </Text>
                 </TouchableOpacity>
               )
@@ -513,96 +749,85 @@ export default function CreateRoutineScreen() {
         </View>
 
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Ejercicios del día {routineDraft?.activeDay}</Text>
+          <Text style={styles.sectionTitle}>{activeDay?.label ?? 'Día'}</Text>
+          {activeDay?.focus ? (
+            <Text style={styles.helperText}>
+              Solo se mostrarán ejercicios compatibles con {getFocusLabel(activeDay.focus)}.
+            </Text>
+          ) : null}
 
           {activeDay?.exercises.length ? (
-            activeDay.exercises.map((exercise) => (
-              <View key={exercise.exerciseId} style={styles.exerciseCard}>
-                <View style={styles.exerciseHeader}>
-                  <View>
-                    <Text style={styles.exerciseName}>{exercise.exerciseName}</Text>
-                    <Text style={styles.exerciseMeta}>
-                      {exercise.sets} series · {exercise.reps} repeticiones
-                    </Text>
+            activeDay.exercises.map((exercise, index) => {
+              const selectedExercise = catalog.find((option) => option.id === exercise.exerciseId)
+
+              return (
+                <View key={exercise.draftKey} style={styles.exerciseCard}>
+                  <View style={styles.exerciseHeader}>
+                    <Text style={styles.exerciseName}>Ejercicio {index + 1}</Text>
+                    <TouchableOpacity onPress={() => handleRemoveExercise(exercise.draftKey)}>
+                      <Text style={styles.deleteText}>Eliminar</Text>
+                    </TouchableOpacity>
                   </View>
-                  <TouchableOpacity onPress={() => handleRemoveExercise(exercise.exerciseId)}>
-                    <Text style={styles.deleteText}>Eliminar</Text>
+
+                  <Text style={styles.label}>Ejercicio</Text>
+                  <TouchableOpacity
+                    style={styles.selector}
+                    onPress={() => setPickerExerciseKey(exercise.draftKey)}
+                  >
+                    <Text style={selectedExercise ? styles.selectorValue : styles.selectorPlaceholder}>
+                      {selectedExercise?.name ?? 'Selecciona un ejercicio'}
+                    </Text>
                   </TouchableOpacity>
+
+                  <Text style={styles.label}>Series</Text>
+                  <TextInput
+                    value={exercise.sets}
+                    onChangeText={(value) =>
+                      updateExercise(exercise.draftKey, (currentExercise) => ({
+                        ...currentExercise,
+                        sets: onlyDigits(value),
+                      }))
+                    }
+                    keyboardType="number-pad"
+                    placeholder="Ejemplo: 3"
+                    style={styles.input}
+                  />
+
+                  <Text style={styles.label}>Repeticiones</Text>
+                  <TextInput
+                    value={exercise.reps}
+                    onChangeText={(value) =>
+                      updateExercise(exercise.draftKey, (currentExercise) => ({
+                        ...currentExercise,
+                        reps: onlyDigits(value),
+                      }))
+                    }
+                    keyboardType="number-pad"
+                    placeholder="Ejemplo: 10"
+                    style={styles.input}
+                  />
                 </View>
-              </View>
-            ))
+              )
+            })
           ) : (
             <View style={styles.emptyCard}>
               <Text style={styles.emptyText}>Todavía no has añadido ejercicios a este día.</Text>
             </View>
           )}
 
-          {pendingExerciseForm.isOpen ? (
-            <View style={styles.formCard}>
-              <Text style={styles.formTitle}>Nuevo ejercicio</Text>
+          <TouchableOpacity
+            style={[styles.primaryButton, !canAddMoreExercises && styles.buttonDisabled]}
+            onPress={handleAddExercise}
+            disabled={!canAddMoreExercises}
+          >
+            <Text style={styles.primaryButtonText}>Añadir ejercicio</Text>
+          </TouchableOpacity>
 
-              <Text style={styles.label}>Ejercicio</Text>
-              <TouchableOpacity
-                style={styles.selector}
-                onPress={() => setIsExercisePickerOpen(true)}
-                disabled={availableExercises.length === 0}
-              >
-                <Text style={selectedExerciseName ? styles.selectorValue : styles.selectorPlaceholder}>
-                  {selectedExerciseName || 'Selecciona un ejercicio'}
-                </Text>
-              </TouchableOpacity>
-
-              {availableExercises.length === 0 ? (
-                <Text style={styles.helperText}>
-                  Ya has añadido todos los ejercicios disponibles para este día.
-                </Text>
-              ) : null}
-
-              <Text style={styles.label}>Series</Text>
-              <TextInput
-                value={pendingExerciseForm.sets}
-                onChangeText={(value) =>
-                  setPendingExerciseForm((currentForm) => ({
-                    ...currentForm,
-                    sets: onlyDigits(value),
-                    error: '',
-                  }))
-                }
-                keyboardType="number-pad"
-                placeholder="Ejemplo: 4"
-                style={styles.input}
-              />
-
-              <Text style={styles.label}>Repeticiones</Text>
-              <TextInput
-                value={pendingExerciseForm.reps}
-                onChangeText={(value) =>
-                  setPendingExerciseForm((currentForm) => ({
-                    ...currentForm,
-                    reps: onlyDigits(value),
-                    error: '',
-                  }))
-                }
-                keyboardType="number-pad"
-                placeholder="Ejemplo: 10"
-                style={styles.input}
-              />
-
-              {!!pendingExerciseForm.error && <Text style={styles.errorText}>{pendingExerciseForm.error}</Text>}
-
-              <TouchableOpacity style={styles.primaryButton} onPress={handleSaveExercise}>
-                <Text style={styles.primaryButtonText}>Guardar ejercicio</Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity style={styles.secondaryButton} onPress={handleCloseExerciseForm}>
-                <Text style={styles.secondaryButtonText}>Cancelar</Text>
-              </TouchableOpacity>
-            </View>
-          ) : (
-            <TouchableOpacity style={styles.primaryButton} onPress={handleOpenExerciseForm}>
-              <Text style={styles.primaryButtonText}>Nuevo ejercicio</Text>
-            </TouchableOpacity>
-          )}
+          {!canAddMoreExercises ? (
+            <Text style={styles.helperText}>
+              Ya has utilizado todos los ejercicios disponibles para este día.
+            </Text>
+          ) : null}
         </View>
 
         {!!saveError && <Text style={styles.errorText}>{saveError}</Text>}
@@ -627,26 +852,33 @@ export default function CreateRoutineScreen() {
       </ScrollView>
 
       <Modal
-        visible={isExercisePickerOpen}
+        visible={pickerExerciseKey !== null}
         animationType="fade"
         transparent
-        onRequestClose={() => setIsExercisePickerOpen(false)}
+        onRequestClose={() => setPickerExerciseKey(null)}
       >
         <View style={styles.modalBackdrop}>
           <View style={styles.modalCard}>
             <Text style={styles.modalTitle}>Selecciona un ejercicio</Text>
+            {!!pickerSelectedExerciseName && (
+              <Text style={styles.modalSubtitle}>Actual: {pickerSelectedExerciseName}</Text>
+            )}
+
             <ScrollView style={styles.modalList} contentContainerStyle={styles.modalListContent}>
-              {availableExercises.map((exercise) => (
+              {pickerOptions.map((exercise) => (
                 <TouchableOpacity
                   key={exercise.id}
                   style={styles.modalOption}
                   onPress={() => {
-                    setPendingExerciseForm((currentForm) => ({
-                      ...currentForm,
+                    if (!pickerExerciseKey) {
+                      return
+                    }
+
+                    updateExercise(pickerExerciseKey, (currentExercise) => ({
+                      ...currentExercise,
                       exerciseId: exercise.id,
-                      error: '',
                     }))
-                    setIsExercisePickerOpen(false)
+                    setPickerExerciseKey(null)
                   }}
                 >
                   <Text style={styles.modalOptionText}>{exercise.name}</Text>
@@ -654,10 +886,7 @@ export default function CreateRoutineScreen() {
               ))}
             </ScrollView>
 
-            <TouchableOpacity
-              style={styles.secondaryButton}
-              onPress={() => setIsExercisePickerOpen(false)}
-            >
+            <TouchableOpacity style={styles.secondaryButton} onPress={() => setPickerExerciseKey(null)}>
               <Text style={styles.secondaryButtonText}>Cerrar</Text>
             </TouchableOpacity>
           </View>
@@ -667,14 +896,11 @@ export default function CreateRoutineScreen() {
   )
 }
 
-function buildRoutineDraft(
-  routine: RoutineRecord | null,
+function buildManualRoutineDraft(
   routineExercises: RoutineExerciseRecord[],
-  catalog: ExerciseOption[],
   totalDays: number
 ): RoutineDraft {
-  const exerciseNameById = new Map(catalog.map((exercise) => [exercise.id, exercise.name]))
-  const days = createEmptyDays(totalDays)
+  const days = createManualDays(totalDays)
 
   routineExercises
     .filter((exercise) => exercise.day_number <= totalDays)
@@ -693,10 +919,10 @@ function buildRoutineDraft(
       }
 
       targetDay.exercises.push({
+        draftKey: nextDraftExerciseKey(),
         exerciseId: exercise.exercise_id,
-        exerciseName: exerciseNameById.get(exercise.exercise_id) ?? 'Ejercicio',
-        sets: exercise.sets,
-        reps: exercise.reps,
+        sets: String(exercise.sets),
+        reps: String(exercise.reps),
         exerciseOrder: targetDay.exercises.length + 1,
       })
     })
@@ -704,15 +930,74 @@ function buildRoutineDraft(
   return {
     totalDays,
     activeDay: 1,
+    mode: 'manual',
+    split: null,
     days,
   }
 }
 
-function createEmptyDays(totalDays: number): RoutineDayDraft[] {
+function buildAutomaticRoutineDraft(split: RoutineSplit, catalog: ExerciseOption[]): RoutineDraft {
+  const days = AUTO_ROUTINE_TEMPLATES[split].map((template, index) => {
+    const usedExerciseIds = new Set<string>()
+    const exercises = template.slots
+      .map((slotCandidates, slotIndex) => {
+        const selectedExercise = pickExerciseForSlot(catalog, template.focus, usedExerciseIds, slotCandidates)
+
+        if (!selectedExercise) {
+          return null
+        }
+
+        usedExerciseIds.add(selectedExercise.id)
+
+        return {
+          draftKey: nextDraftExerciseKey(),
+          exerciseId: selectedExercise.id,
+          sets: DEFAULT_EXERCISE_SETS,
+          reps: DEFAULT_EXERCISE_REPS,
+          exerciseOrder: slotIndex + 1,
+        }
+      })
+      .filter((exercise): exercise is RoutineExerciseDraft => exercise !== null)
+
+    return {
+      dayNumber: index + 1,
+      label: template.label,
+      focus: template.focus,
+      exercises,
+    }
+  })
+
+  return {
+    totalDays: days.length,
+    activeDay: 1,
+    mode: 'automatic',
+    split,
+    days,
+  }
+}
+
+function createManualDays(totalDays: number): RoutineDayDraft[] {
   return Array.from({ length: totalDays }, (_, index) => ({
     dayNumber: index + 1,
+    label: `Día ${index + 1}`,
+    focus: null,
     exercises: [],
   }))
+}
+
+function createEmptyExerciseDraft(exerciseOrder: number): RoutineExerciseDraft {
+  return {
+    draftKey: nextDraftExerciseKey(),
+    exerciseId: '',
+    sets: DEFAULT_EXERCISE_SETS,
+    reps: DEFAULT_EXERCISE_REPS,
+    exerciseOrder,
+  }
+}
+
+function nextDraftExerciseKey() {
+  draftExerciseCounter += 1
+  return `routine-exercise-${draftExerciseCounter}`
 }
 
 function reindexExercises(exercises: RoutineExerciseDraft[]) {
@@ -720,6 +1005,86 @@ function reindexExercises(exercises: RoutineExerciseDraft[]) {
     ...exercise,
     exerciseOrder: index + 1,
   }))
+}
+
+function getSelectableExercises(
+  day: RoutineDayDraft,
+  catalog: ExerciseOption[],
+  mode: RoutineMode,
+  currentExerciseId: string
+) {
+  return catalog.filter((exercise) => {
+    if (mode === 'automatic' && day.focus && !exerciseMatchesDayFocus(exercise, day.focus)) {
+      return false
+    }
+
+    const alreadyExists = day.exercises.some(
+      (dayExercise) => dayExercise.exerciseId === exercise.id && exercise.id !== currentExerciseId
+    )
+
+    return !alreadyExists
+  })
+}
+
+function exerciseMatchesDayFocus(exercise: ExerciseOption, focus: DayFocus) {
+  if (focus === 'upper' || focus === 'lower') {
+    return exercise.upper_lower_group === focus
+  }
+
+  return exercise.ppl_group === focus
+}
+
+function pickExerciseForSlot(
+  catalog: ExerciseOption[],
+  focus: DayFocus,
+  usedExerciseIds: Set<string>,
+  candidateNames: string[]
+) {
+  for (const candidateName of candidateNames) {
+    const match = catalog.find(
+      (exercise) =>
+        exercise.name === candidateName
+        && !usedExerciseIds.has(exercise.id)
+        && exerciseMatchesDayFocus(exercise, focus)
+    )
+
+    if (match) {
+      return match
+    }
+  }
+
+  return catalog.find(
+    (exercise) => !usedExerciseIds.has(exercise.id) && exerciseMatchesDayFocus(exercise, focus)
+  ) ?? null
+}
+
+function getSplitLabel(split: RoutineSplit | null) {
+  if (split === 'upper_lower') {
+    return 'Upper / Lower'
+  }
+
+  if (split === 'push_pull_legs') {
+    return 'Pull / Push / Legs'
+  }
+
+  return 'manual'
+}
+
+function getFocusLabel(focus: DayFocus) {
+  switch (focus) {
+    case 'upper':
+      return 'tren superior'
+    case 'lower':
+      return 'tren inferior'
+    case 'pull':
+      return 'tirón'
+    case 'push':
+      return 'empuje'
+    case 'legs':
+      return 'pierna'
+    default:
+      return 'este día'
+  }
 }
 
 function onlyDigits(value: string) {
@@ -819,7 +1184,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     paddingVertical: 14,
     backgroundColor: '#ffffff',
-    marginBottom: 8,
+    marginBottom: 16,
   },
   selectorValue: {
     fontSize: 16,
@@ -855,6 +1220,70 @@ const styles = StyleSheet.create({
     color: '#2563eb',
     fontSize: 15,
     fontWeight: '600',
+  },
+  modeOptions: {
+    gap: 12,
+    marginBottom: 20,
+  },
+  modeCard: {
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#cbd5e1',
+    backgroundColor: '#f8fafc',
+    padding: 16,
+  },
+  modeCardActive: {
+    borderColor: '#0f172a',
+    backgroundColor: '#e2e8f0',
+  },
+  modeTitle: {
+    fontSize: 17,
+    fontWeight: '700',
+    color: '#0f172a',
+    marginBottom: 8,
+  },
+  modeTitleActive: {
+    color: '#020617',
+  },
+  modeDescription: {
+    fontSize: 14,
+    lineHeight: 20,
+    color: '#475569',
+  },
+  modeDescriptionActive: {
+    color: '#334155',
+  },
+  splitOptions: {
+    gap: 12,
+    marginBottom: 20,
+  },
+  splitCard: {
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#cbd5e1',
+    backgroundColor: '#f8fafc',
+    padding: 16,
+  },
+  splitCardActive: {
+    borderColor: '#0f172a',
+    backgroundColor: '#e2e8f0',
+  },
+  splitTitle: {
+    fontSize: 17,
+    fontWeight: '700',
+    color: '#0f172a',
+    marginBottom: 8,
+  },
+  splitTitleActive: {
+    color: '#020617',
+  },
+  splitDescription: {
+    fontSize: 14,
+    lineHeight: 20,
+    color: '#475569',
+  },
+  splitDescriptionActive: {
+    color: '#334155',
   },
   warningCard: {
     backgroundColor: '#fff7ed',
@@ -943,16 +1372,12 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
     gap: 12,
+    marginBottom: 12,
   },
   exerciseName: {
     fontSize: 18,
     fontWeight: '700',
     color: '#0f172a',
-    marginBottom: 4,
-  },
-  exerciseMeta: {
-    fontSize: 15,
-    color: '#475569',
   },
   deleteText: {
     fontSize: 15,
@@ -969,23 +1394,6 @@ const styles = StyleSheet.create({
     fontSize: 16,
     lineHeight: 24,
     color: '#475569',
-  },
-  formCard: {
-    backgroundColor: '#ffffff',
-    borderRadius: 16,
-    padding: 20,
-    marginTop: 8,
-    shadowColor: '#0f172a',
-    shadowOpacity: 0.08,
-    shadowRadius: 16,
-    shadowOffset: { width: 0, height: 6 },
-    elevation: 3,
-  },
-  formTitle: {
-    fontSize: 22,
-    fontWeight: '700',
-    color: '#0f172a',
-    marginBottom: 16,
   },
   errorCard: {
     backgroundColor: '#ffffff',
@@ -1026,6 +1434,11 @@ const styles = StyleSheet.create({
     fontSize: 22,
     fontWeight: '700',
     color: '#0f172a',
+    marginBottom: 8,
+  },
+  modalSubtitle: {
+    fontSize: 15,
+    color: '#475569',
     marginBottom: 16,
   },
   modalList: {

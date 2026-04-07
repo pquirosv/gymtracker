@@ -130,12 +130,20 @@ export default function HomeScreen() {
             <TouchableOpacity style={styles.primaryButton} onPress={() => router.push('/start-session')}>
               <Text style={styles.primaryButtonText}>Comenzar sesión</Text>
             </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.secondaryActionButton}
+              onPress={() => router.push('/create-routine')}
+            >
+              <Text style={styles.secondaryActionButtonText}>Editar rutina</Text>
+            </TouchableOpacity>
           </View>
         ) : (
           <View style={styles.card}>
             <Text style={styles.cardTitle}>Aún no tienes rutina</Text>
             <Text style={styles.cardBody}>
-              Puedes crear una rutina o iniciar una sesión libre y registrar tus ejercicios manualmente.
+              Puedes crear una rutina manual o automática, o iniciar una sesión libre y registrar tus
+              ejercicios manualmente.
             </Text>
 
             <TouchableOpacity
