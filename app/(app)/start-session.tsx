@@ -372,7 +372,7 @@ export default function StartSessionScreen() {
                   editable={!saving}
                 />
 
-                <Text style={styles.label}>Repeticiones</Text>
+                <Text style={styles.label}>Repeticiones (última serie)</Text>
                 <TextInput
                   value={row.reps}
                   onChangeText={(value) =>
@@ -387,7 +387,7 @@ export default function StartSessionScreen() {
                   editable={!saving}
                 />
 
-                <Text style={styles.label}>Peso</Text>
+                <Text style={styles.label}>Peso (última serie)</Text>
                 <TextInput
                   value={row.weight}
                   onChangeText={(value) =>
@@ -432,7 +432,7 @@ export default function StartSessionScreen() {
               <Text style={styles.checkboxTitle}>Avanzar el día actual</Text>
               <Text style={styles.checkboxDescription}>
                 Has modificado los ejercicios de la rutina. Desmárcalo si quieres guardar la sesión sin avanzar el
-                día {routine.current_day}.
+                día.
               </Text>
             </View>
           </TouchableOpacity>
