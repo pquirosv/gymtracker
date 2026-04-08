@@ -51,6 +51,10 @@ type FinalizeWorkoutSessionResult = {
   next_current_day: number | null
 }
 
+type RoutineExerciseComposition = {
+  exerciseId: string
+}
+
 let draftRowCounter = 0
 const weightFormatter = new Intl.NumberFormat('es-MX', {
   maximumFractionDigits: 2,
@@ -66,8 +70,10 @@ export default function StartSessionScreen() {
   const [catalog, setCatalog] = useState<ExerciseOption[]>([])
   const [routine, setRoutine] = useState<RoutineRecord | null>(null)
   const [sessionRows, setSessionRows] = useState<SessionDraftRow[]>([])
+  const [baseRoutineComposition, setBaseRoutineComposition] = useState<RoutineExerciseComposition[]>([])
   const [previousWeightByExerciseId, setPreviousWeightByExerciseId] = useState<Record<string, number>>({})
   const [pickerRowKey, setPickerRowKey] = useState<string | null>(null)
+  const [shouldAdvanceCurrentDay, setShouldAdvanceCurrentDay] = useState(true)
 
   useEffect(() => {
     const userId = session?.user.id
@@ -110,6 +116,7 @@ export default function StartSessionScreen() {
       }
 
       let nextRows: SessionDraftRow[] = []
+      let nextBaseRoutineComposition: RoutineExerciseComposition[] = []
       const nextPreviousWeightByExerciseId = buildPreviousWeightByExerciseId(historyResult.data ?? [])
 
       if (routineResult.data) {
@@ -151,12 +158,17 @@ export default function StartSessionScreen() {
           weight: '',
           exerciseOrder: index + 1,
         }))
+        nextBaseRoutineComposition = (routineExercisesResult.data ?? []).map((exercise) => ({
+          exerciseId: exercise.exercise_id,
+        }))
       }
 
       setCatalog(catalogResult.data ?? [])
       setPreviousWeightByExerciseId(nextPreviousWeightByExerciseId)
       setRoutine(routineResult.data)
       setSessionRows(nextRows)
+      setBaseRoutineComposition(nextBaseRoutineComposition)
+      setShouldAdvanceCurrentDay(true)
       setLoading(false)
     }
 
@@ -172,6 +184,15 @@ export default function StartSessionScreen() {
     : null
   const pickerSelectedExerciseName =
     catalog.find((exercise) => exercise.id === pickerRow?.exerciseId)?.name ?? ''
+  const hasExerciseCompositionChanges = routine
+    ? hasDifferentExerciseComposition(baseRoutineComposition, sessionRows)
+    : false
+
+  useEffect(() => {
+    if (!hasExerciseCompositionChanges) {
+      setShouldAdvanceCurrentDay(true)
+    }
+  }, [hasExerciseCompositionChanges])
 
   const handleAddRow = () => {
     setSessionRows((currentRows) => [
@@ -240,6 +261,7 @@ export default function StartSessionScreen() {
 
     const { data, error } = await supabase.rpc('finalize_workout_session', {
       session_exercises: payload,
+      should_advance_current_day: routine && hasExerciseCompositionChanges ? shouldAdvanceCurrentDay : true,
     })
 
     if (error || !data) {
@@ -396,6 +418,26 @@ export default function StartSessionScreen() {
 
         {!!saveError && <Text style={styles.errorText}>{saveError}</Text>}
 
+        {routine && hasExerciseCompositionChanges ? (
+          <TouchableOpacity
+            style={styles.checkboxCard}
+            onPress={() => setShouldAdvanceCurrentDay((currentValue) => !currentValue)}
+            disabled={saving}
+            activeOpacity={0.8}
+          >
+            <View style={[styles.checkbox, shouldAdvanceCurrentDay && styles.checkboxChecked]}>
+              {shouldAdvanceCurrentDay ? <Text style={styles.checkboxMark}>✓</Text> : null}
+            </View>
+            <View style={styles.checkboxContent}>
+              <Text style={styles.checkboxTitle}>Avanzar el día actual</Text>
+              <Text style={styles.checkboxDescription}>
+                Has modificado los ejercicios de la rutina. Desmárcalo si quieres guardar la sesión sin avanzar el
+                día {routine.current_day}.
+              </Text>
+            </View>
+          </TouchableOpacity>
+        ) : null}
+
         <TouchableOpacity
           style={[styles.primaryButton, saving && styles.buttonDisabled]}
           onPress={handleFinalizeSession}
@@ -539,6 +581,17 @@ function buildPreviousWeightByExerciseId(historyRows: ExerciseHistoryRecord[]) {
 
 function formatWeight(value: number) {
   return weightFormatter.format(value)
+}
+
+function hasDifferentExerciseComposition(
+  baseRoutineComposition: RoutineExerciseComposition[],
+  sessionRows: SessionDraftRow[]
+) {
+  if (baseRoutineComposition.length !== sessionRows.length) {
+    return true
+  }
+
+  return sessionRows.some((row, index) => row.exerciseId !== baseRoutineComposition[index]?.exerciseId)
 }
 
 const styles = StyleSheet.create({
@@ -687,6 +740,51 @@ const styles = StyleSheet.create({
   emptyText: {
     fontSize: 16,
     lineHeight: 24,
+    color: '#475569',
+  },
+  checkboxCard: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 12,
+    backgroundColor: '#ffffff',
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#cbd5e1',
+    padding: 16,
+    marginBottom: 20,
+  },
+  checkbox: {
+    width: 24,
+    height: 24,
+    borderRadius: 6,
+    borderWidth: 2,
+    borderColor: '#94a3b8',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 2,
+    backgroundColor: '#ffffff',
+  },
+  checkboxChecked: {
+    backgroundColor: '#0f172a',
+    borderColor: '#0f172a',
+  },
+  checkboxMark: {
+    color: '#ffffff',
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  checkboxContent: {
+    flex: 1,
+    gap: 4,
+  },
+  checkboxTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#0f172a',
+  },
+  checkboxDescription: {
+    fontSize: 14,
+    lineHeight: 20,
     color: '#475569',
   },
   primaryButton: {
