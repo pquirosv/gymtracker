@@ -171,15 +171,21 @@ export default function HomeScreen() {
             <Text style={styles.emptyStateText}>No tienes sesiones anteriores</Text>
           </View>
         ) : (
-          sessions.map((workoutSession) => (
-            <TouchableOpacity
-              key={workoutSession.id}
-              style={styles.sessionCard}
-              onPress={() => router.push(`/workout-session/${workoutSession.id}`)}
-            >
-              <Text style={styles.sessionDate}>{formatSessionDate(workoutSession.started_at)}</Text>
+          <>
+            {sessions.map((workoutSession) => (
+              <TouchableOpacity
+                key={workoutSession.id}
+                style={styles.sessionCard}
+                onPress={() => router.push(`/workout-session/${workoutSession.id}`)}
+              >
+                <Text style={styles.sessionDate}>{formatSessionDate(workoutSession.started_at)}</Text>
+              </TouchableOpacity>
+            ))}
+
+            <TouchableOpacity style={styles.viewAllButton} onPress={() => router.push('/sessions')}>
+              <Text style={styles.viewAllButtonText}>ver todas las sesiones &gt;&gt;</Text>
             </TouchableOpacity>
-          ))
+          </>
         )}
       </View>
     </ScrollView>
@@ -321,6 +327,15 @@ const styles = StyleSheet.create({
   sessionDate: {
     fontSize: 15,
     color: '#475569',
+  },
+  viewAllButton: {
+    alignSelf: 'flex-start',
+    paddingVertical: 8,
+  },
+  viewAllButtonText: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#0f172a',
   },
   loadingTitle: {
     fontSize: 28,
